@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>티처블 머신 포즈 장애물 달리기 게임</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- TensorFlow.js and Teachable Machine Pose Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.6/dist/teachablemachine-pose.min.js"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            user-select: none;
+        }
+        .font-jua {
+            font-family: 'Jua', sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col justify-between items-center p-2 sm:p-4">
+
+    <!-- Top Header -->
+    <header class="w-full max-w-5xl flex justify-between items-center mb-2 px-2">
+        <h1 class="text-xl sm:text-3xl font-jua text-amber-400 flex items-center gap-2">
+            <i class="fa-solid fa-person-running"></i> AI 포즈 장애물 달리기
+        </h1>
+        <div class="flex gap-4 text-sm sm:text-base font-bold">
+            <div class="bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
+                최고 점수: <span id="highScore" class="text-amber-300 font-jua text-lg">0</span>
+            </div>
+            <div class="bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
+                점수: <span id="score" class="text-green-400 font-jua text-lg">0</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="w-full max-w-5xl flex flex-col lg:flex-row gap-4 items-center justify-center flex-1">
+        
+        <!-- Game Canvas Container -->
+        <div class="relative w-full lg:w-2/3 aspect-[16/9] bg-slate-800 rounded-2xl overflow-hidden shadow-2xl border-2 border-slate-700 flex flex-col items-center justify-center">
+            <canvas id="gameCanvas" class="w-full h-full"></canvas>
+
+            <!-- Start / Game Over Overlay -->
+            <div id="overlay" class="absolute inset-0 bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center z-10 transition-all duration-300">
+                <h2 id="overlayTitle" class="text-3xl sm:text-5xl font-jua text-amber-400 mb-3">포즈 달리기 준비!</h2>
+                <p id="overlayMessage" class="text-slate-300 mb-6 text-sm sm:text-base max-w-md">
+                    'RIGHT HAND' 동작을 하면 <strong class="text-amber-300">점프</strong>하여 바닥 장애물을 피하고,<br>
+                    'LEFT HAND' 동작을 하면 <strong class="text-cyan-300">숙여서</strong> 공중 장애물을 피합니다.
+                </p>
+                <button id="startBtn" onclick="startGame()" class="px-8 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-jua text-2xl rounded-xl shadow-lg transform hover:scale-105 active:scale-95 transition-all">
+                    <i class="fa-solid fa-play mr-2"></i> 게임 시작하기
+                </button>
+            </div>
+        </div>
+
+        <!-- Webcam & Pose Info Panel -->
+        <div class="w-full lg:w-1/3 flex flex-col gap-3">
+            <!-- Camera Canvas Container -->
+            <div class="relative bg-slate-800 rounded-2xl p-3 border-2 border-slate-700 shadow-xl flex flex-col items-center">
+                <div class="flex justify-between items-center w-full mb-2 px-1">
+                    <span class="text-sm font-bold text-slate-300 flex items-center gap-1">
+                        <i class="fa-solid fa-camera"></i> 웹캠 모니터링
+                    </span>
+                    <span id="modelStatus" class="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded-full border border-yellow-500/40">
+                        모델 불러오는 중...
+                    </span>
+                </div>
+                
+                <div class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-slate-700 flex items-center justify-center">
+                    <canvas id="webcamCanvas" class="w-full h-full object-cover transform -scale-x-100"></canvas>
+                </div>
+
+                <!-- Detected Pose Card -->
+                <div class="w-full mt-3 bg-slate-900/80 rounded-xl p-3 border border-slate-700/80 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs text-slate-400">인식된 동작</div>
+                        <div id="detectedPose" class="text-xl font-jua text-amber-400 mt-0.5">REST</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs text-slate-400">신뢰도</div>
+                        <div id="poseConfidence" class="text-lg font-bold text-green-400 mt-0.5">0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls Guide Card -->
+            <div class="bg-slate-800/80 rounded-2xl p-3 border border-slate-700/80 text-xs sm:text-sm text-slate-300 space-y-1.5">
+                <div class="font-bold text-amber-400 mb-1 flex items-center gap-1.5">
+                    <i class="fa-solid fa-circle-info"></i> 동작 제어 안내
+                </div>
+                <div class="flex justify-between items-center bg-slate-900/50 p-2 rounded-lg">
+                    <span><strong class="text-amber-300">RIGHT HAND</strong> : 점프</span>
+                    <span class="text-slate-400 text-xs">바닥 장애물 회피</span>
+                </div>
+                <div class="flex justify-between items-center bg-slate-900/50 p-2 rounded-lg">
+                    <span><strong class="text-cyan-300">LEFT HAND</strong> : 몸 숙이기</span>
+                    <span class="text-slate-400 text-xs">공중 장애물 회피</span>
+                </div>
+                <div class="flex justify-between items-center bg-slate-900/50 p-2 rounded-lg">
+                    <span><strong class="text-slate-300">REST</strong> : 대기 / 달리 기</span>
+                    <span class="text-slate-400 text-xs">기본 평지 보행</span>
+                </div>
+                <div class="text-slate-400 text-[11px] pt-1 italic text-center">
+                    * 키보드 지원: [↑/스페이스바] 점프, [↓] 숙이기
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="w-full text-center text-slate-500 text-xs mt-2 py-1">
+        Powered by Teachable Machine Pose & TensorFlow.js
+    </footer>
+
+    <!-- JavaScript Game & AI Logic -->
+    <script>
+        // Teachable Machine URL Setup
+        const URL = "https://teachablemachine.withgoogle.com/models/CToWDWkF9/";
+        let model, webcam, ctxWebcam, maxPredictions;
+
+        // DOM Elements
+        const gameCanvas = document.getElementById('gameCanvas');
+        const ctxGame = gameCanvas.getContext('2d');
+        const webcamCanvas = document.getElementById('webcamCanvas');
+        const overlay = document.getElementById('overlay');
+        const overlayTitle = document.getElementById('overlayTitle');
+        const overlayMessage = document.getElementById('overlayMessage');
+        const startBtn = document.getElementById('startBtn');
+        const detectedPoseEl = document.getElementById('detectedPose');
+        const poseConfidenceEl = document.getElementById('poseConfidence');
+        const modelStatusEl = document.getElementById('modelStatus');
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('highScore');
+
+        // Canvas Setup
+        function resizeCanvas() {
+            gameCanvas.width = 800;
+            gameCanvas.height = 450;
+        }
+        resizeCanvas();
+
+        // Game State Variables
+        let isGameRunning = false;
+        let score = 0;
+        let highScore = localStorage.getItem('tm_runner_highscore') || 0;
+        highScoreEl.innerText = Math.floor(highScore);
+
+        let gameSpeed = 6;
+        let frameCount = 0;
+        let currentPose = "REST";
+        let poseConfidence = 0;
+
+        // Player Properties
+        const player = {
+            x: 80,
+            y: 0,
+            width: 45,
+            height: 70,
+            normalHeight: 70,
+            duckHeight: 35,
+            groundY: 330,
+            vy: 0,
+            gravity: 0.85,
+            jumpStrength: -15.5,
+            isGrounded: true,
+            isDucking: false,
+            color: '#f59e0b',
+            
+            reset() {
+                this.y = this.groundY - this.normalHeight;
+                this.height = this.normalHeight;
+                this.vy = 0;
+                this.isGrounded = true;
+                this.isDucking = false;
+            },
+            
+            jump() {
+                if (this.isGrounded && !this.isDucking) {
+                    this.vy = this.jumpStrength;
+                    this.isGrounded = false;
+                }
+            },
+            
+            duck(shouldDuck) {
+                if (shouldDuck && this.isGrounded) {
+                    this.isDucking = true;
+                    this.height = this.duckHeight;
+                    this.y = this.groundY - this.duckHeight;
+                } else if (!shouldDuck && this.isDucking) {
+                    this.isDucking = false;
+                    this.height = this.normalHeight;
+                    this.y = this.groundY - this.normalHeight;
+                }
+            },
+            
+            update() {
+                // Apply Gravity
+                if (!this.isGrounded) {
+                    this.vy += this.gravity;
+                    this.y += this.vy;
+                    if (this.y >= this.groundY - this.height) {
+                        this.y = this.groundY - this.height;
+                        this.vy = 0;
+                        this.isGrounded = true;
+                    }
+                }
+            },
+            
+            draw() {
+                ctxGame.save();
+                
+                // Draw Character Body
+                ctxGame.fillStyle = this.isDucking ? '#06b6d4' : '#f59e0b';
+                ctxGame.shadowColor = 'rgba(0,0,0,0.3)';
+                ctxGame.shadowBlur = 8;
+                
+                // Rounded Rectangle for Player Body
+                const r = 8;
+                ctxGame.beginPath();
+                ctxGame.roundRect(this.x, this.y, this.width, this.height, r);
+                ctxGame.fill();
+                
+                // Character Eyes / Visor
+                ctxGame.fillStyle = '#ffffff';
+                if (this.isDucking) {
+                    ctxGame.fillRect(this.x + this.width - 15, this.y + 10, 10, 6);
+                } else {
+                    ctxGame.fillRect(this.x + this.width - 15, this.y + 12, 10, 8);
+                }
+
+                // Running Animation Legs (Visual Effect)
+                if (this.isGrounded && isGameRunning) {
+                    ctxGame.strokeStyle = '#d97706';
+                    ctxGame.lineWidth = 4;
+                    const legOffset = Math.sin(frameCount * 0.3) * 10;
+                    ctxGame.beginPath();
+                    ctxGame.moveTo(this.x + 10, this.y + this.height);
+                    ctxGame.lineTo(this.x + 10 - legOffset, this.y + this.height + 8);
+                    ctxGame.moveTo(this.x + this.width - 10, this.y + this.height);
+                    ctxGame.lineTo(this.x + this.width - 10 + legOffset, this.y + this.height + 8);
+                    ctxGame.stroke();
+                }
+
+                ctxGame.restore();
+            }
+        };
+
+        // Obstacle Manager
+        let obstacles = [];
+        class Obstacle {
+            constructor(type) {
+                this.type = type; // 'ground' or 'air'
+                this.width = type === 'ground' ? 35 + Math.random() * 15 : 45;
+                this.height = type === 'ground' ? 45 + Math.random() * 15 : 35;
+                this.x = gameCanvas.width + 50;
+                
+                if (type === 'ground') {
+                    this.y = player.groundY - this.height;
+                    this.color = '#ef4444'; // Red
+                } else {
+                    // Overhead obstacle high enough to duck under, low enough to hit standing player
+                    this.y = player.groundY - player.normalHeight - 10;
+                    this.color = '#a855f7'; // Purple
+                }
+            }
+
+            update() {
+                this.x -= gameSpeed;
+            }
+
+            draw() {
+                ctxGame.save();
+                ctxGame.fillStyle = this.color;
+                ctxGame.shadowColor = this.color;
+                ctxGame.shadowBlur = 10;
+
+                if (this.type === 'ground') {
+                    // Spiky Ground Obstacle
+                    ctxGame.beginPath();
+                    ctxGame.moveTo(this.x, this.y + this.height);
+                    ctxGame.lineTo(this.x + this.width / 2, this.y);
+                    ctxGame.lineTo(this.x + this.width, this.y + this.height);
+                    ctxGame.closePath();
+                    ctxGame.fill();
+                } else {
+                    // Flying Drone / Air Obstacle
+                    ctxGame.beginPath();
+                    ctxGame.roundRect(this.x, this.y, this.width, this.height, 6);
+                    ctxGame.fill();
+                    
+                    // Warning Beacon Light
+                    ctxGame.fillStyle = '#facc15';
+                    ctxGame.beginPath();
+                    ctxGame.arc(this.x + this.width / 2, this.y + this.height / 2, 6, 0, Math.PI * 2);
+                    ctxGame.fill();
+                }
+                ctxGame.restore();
+            }
+        }
+
+        // Background Elements (Parallax Scenery)
+        let bgStars = Array.from({ length: 30 }, () => ({
+            x: Math.random() * 800,
+            y: Math.random() * 220,
+            size: Math.random() * 2 + 1,
+            speed: Math.random() * 0.5 + 0.2
+        }));
+
+        function drawBackground() {
+            // Gradient Sky
+            const bgGrad = ctxGame.createLinearGradient(0, 0, 0, gameCanvas.height);
+            bgGrad.addColorStop(0, '#0f172a');
+            bgGrad.addColorStop(1, '#1e293b');
+            ctxGame.fillStyle = bgGrad;
+            ctxGame.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+            // Stars Movement
+            ctxGame.fillStyle = '#94a3b8';
+            bgStars.forEach(star => {
+                star.x -= star.speed;
+                if (star.x < 0) star.x = gameCanvas.width;
+                ctxGame.fillRect(star.x, star.y, star.size, star.size);
+            });
+
+            // Grid Line Floor
+            ctxGame.fillStyle = '#334155';
+            ctxGame.fillRect(0, player.groundY, gameCanvas.width, gameCanvas.height - player.groundY);
+
+            // Ground Neon Boundary
+            ctxGame.strokeStyle = '#38bdf8';
+            ctxGame.lineWidth = 3;
+            ctxGame.beginPath();
+            ctxGame.moveTo(0, player.groundY);
+            ctxGame.lineTo(gameCanvas.width, player.groundY);
+            ctxGame.stroke();
+
+            // Moving Ground Stripes
+            ctxGame.strokeStyle = '#475569';
+            ctxGame.lineWidth = 2;
+            const stripeSpacing = 40;
+            const stripeOffset = (frameCount * gameSpeed) % stripeSpacing;
+            for (let x = -stripeOffset; x < gameCanvas.width; x += stripeSpacing) {
+                ctxGame.beginPath();
+                ctxGame.moveTo(x, player.groundY);
+                ctxGame.lineTo(x - 20, gameCanvas.height);
+                ctxGame.stroke();
+            }
+        }
+
+        // Initialize Teachable Machine Pose Model
+        async function initPoseModel() {
+            const modelURL = URL + "model.json";
+            const metadataURL = URL + "metadata.json";
+
+            try {
+                model = await tmPose.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                // Setup Webcam
+                const size = 200;
+                const flip = true; 
+                webcam = new tmPose.Webcam(size, size, flip);
+                await webcam.setup();
+                await webcam.play();
+
+                // Webcam Canvas Config
+                webcamCanvas.width = size;
+                webcamCanvas.height = size;
+                ctxWebcam = webcamCanvas.getContext('2d');
+
+                modelStatusEl.innerText = "모델 연동 완료!";
+                modelStatusEl.className = "text-xs bg-green-500/20 text-green-300 px-2 py-0.5 rounded-full border border-green-500/40";
+
+                window.requestAnimationFrame(poseLoop);
+            } catch (err) {
+                console.error("Model load error:", err);
+                modelStatusEl.innerText = "웹캠/모델 연동 실패";
+                modelStatusEl.className = "text-xs bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full border border-red-500/40";
+            }
+        }
+
+        // Continuous Pose Prediction Loop
+        async function poseLoop(timestamp) {
+            webcam.update();
+            await predictPose();
+            window.requestAnimationFrame(poseLoop);
+        }
+
+        async function predictPose() {
+            // Pose estimate
+            const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+            const prediction = await model.predict(posenetOutput);
+
+            let highestPrediction = { className: "REST", probability: 0 };
+
+            for (let i = 0; i < maxPredictions; i++) {
+                if (prediction[i].probability > highestPrediction.probability) {
+                    highestPrediction = prediction[i];
+                }
+            }
+
+            currentPose = highestPrediction.className;
+            poseConfidence = (highestPrediction.probability * 100).toFixed(0);
+
+            // Update UI
+            detectedPoseEl.innerText = currentPose;
+            poseConfidenceEl.innerText = `${poseConfidence}%`;
+
+            // Action Triggering
+            if (isGameRunning) {
+                if (currentPose === "RIGHT HAND" && highestPrediction.probability > 0.55) {
+                    player.jump();
+                } else if (currentPose === "LEFT HAND" && highestPrediction.probability > 0.55) {
+                    player.duck(true);
+                } else {
+                    player.duck(false);
+                }
+            }
+
+            // Draw Webcam Feed & Skeleton
+            drawWebcamSkeleton(pose);
+        }
+
+        function drawWebcamSkeleton(pose) {
+            if (webcam.canvas) {
+                ctxWebcam.drawImage(webcam.canvas, 0, 0);
+                if (pose) {
+                    const minPartConfidence = 0.5;
+                    tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctxWebcam);
+                    tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctxWebcam);
+                }
+            }
+        }
+
+        // Spawn Random Obstacles
+        function handleObstacles() {
+            frameCount++;
+            
+            // Spawn Interval based on Game Speed
+            const spawnInterval = Math.max(45, Math.floor(1000 / (gameSpeed * 8)));
+            
+            if (frameCount % spawnInterval === 0) {
+                const type = Math.random() > 0.45 ? 'ground' : 'air';
+                obstacles.push(new Obstacle(type));
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].update();
+                obstacles[i].draw();
+
+                // AABB Collision Detection
+                if (
+                    player.x < obstacles[i].x + obstacles[i].width &&
+                    player.x + player.width > obstacles[i].x &&
+                    player.y < obstacles[i].y + obstacles[i].height &&
+                    player.y + player.height > obstacles[i].y
+                ) {
+                    gameOver();
+                }
+
+                // Remove Offscreen Obstacles
+                if (obstacles[i].x + obstacles[i].width < 0) {
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        // Game Loop
+        let animationFrameId;
+        function gameLoop() {
+            if (!isGameRunning) return;
+
+            // Clear Screen
+            ctxGame.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+            // Render World
+            drawBackground();
+
+            // Player Logic
+            player.update();
+            player.draw();
+
+            // Obstacles Logic
+            handleObstacles();
+
+            // Score & Difficulty Progression
+            score += 0.15;
+            gameSpeed = 6 + Math.floor(score / 100) * 0.7; // Speed increases with score
+            
+            scoreEl.innerText = Math.floor(score);
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // Start / Reset Game
+        function startGame() {
+            score = 0;
+            gameSpeed = 6;
+            frameCount = 0;
+            obstacles = [];
+            player.reset();
+            isGameRunning = true;
+
+            overlay.classList.add('hidden');
+            scoreEl.innerText = '0';
+
+            cancelAnimationFrame(animationFrameId);
+            gameLoop();
+        }
+
+        // Game Over
+        function gameOver() {
+            isGameRunning = false;
+            cancelAnimationFrame(animationFrameId);
+
+            const finalScore = Math.floor(score);
+            if (finalScore > highScore) {
+                highScore = finalScore;
+                localStorage.setItem('tm_runner_highscore', highScore);
+                highScoreEl.innerText = highScore;
+            }
+
+            overlayTitle.innerText = "게임 오버!";
+            overlayTitle.className = "text-3xl sm:text-5xl font-jua text-red-500 mb-3";
+            overlayMessage.innerHTML = `장애물과 부딪혔습니다!<br>최종 점수: <strong class="text-amber-300 text-xl font-jua">${finalScore}점</strong>`;
+            startBtn.innerHTML = `<i class="fa-solid fa-rotate-right mr-2"></i> 다시 시작하기`;
+            overlay.classList.remove('hidden');
+        }
+
+        // Keyboard Controls Fallback
+        window.addEventListener('keydown', (e) => {
+            if (!isGameRunning) return;
+            if (e.code === 'ArrowUp' || e.code === 'Space') {
+                player.jump();
+            } else if (e.code === 'ArrowDown') {
+                player.duck(true);
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowDown') {
+                player.duck(false);
+            }
+        });
+
+        // Initialize App
+        window.onload = () => {
+            player.reset();
+            drawBackground();
+            player.draw();
+            initPoseModel();
+        };
+    </script>
+</body>
+</html>
